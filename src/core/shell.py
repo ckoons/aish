@@ -1,0 +1,212 @@
+"""
+AIShell - Main shell implementation
+"""
+
+import os
+import sys
+import subprocess
+import readline
+import atexit
+from pathlib import Path
+
+from parser.pipeline import PipelineParser
+from registry.socket_registry import SocketRegistry
+
+class AIShell:
+    """The AI Shell - orchestrates AI pipelines"""
+    
+    def __init__(self, rhetor_endpoint='http://localhost:8003', debug=False):
+        self.rhetor_endpoint = rhetor_endpoint
+        self.debug = debug
+        self.parser = PipelineParser()
+        self.registry = SocketRegistry(rhetor_endpoint)
+        self.history_file = Path.home() / '.aish_history'
+        self.active_sockets = {}  # Track active socket IDs by AI name
+        
+        # Setup readline for interactive mode
+        self._setup_readline()
+    
+    def _setup_readline(self):
+        """Configure readline for better interactive experience"""
+        # Load history
+        if self.history_file.exists():
+            readline.read_history_file(self.history_file)
+        
+        # Save history on exit
+        atexit.register(lambda: readline.write_history_file(self.history_file))
+        
+        # Tab completion would go here
+        # readline.set_completer(self._completer)
+        # readline.parse_and_bind("tab: complete")
+    
+    def execute_command(self, command):
+        """Execute a single AI pipeline command"""
+        try:
+            # Parse the command
+            pipeline = self.parser.parse(command)
+            
+            if self.debug:
+                print(f"[DEBUG] Parsed pipeline: {pipeline}")
+            
+            # Execute the pipeline
+            result = self._execute_pipeline(pipeline)
+            
+            # Output result
+            if result:
+                print(result)
+                
+        except Exception as e:
+            print(f"aish: {e}", file=sys.stderr)
+            return 1
+        
+        return 0
+    
+    def execute_script(self, script_path):
+        """Execute an AI script file"""
+        try:
+            with open(script_path, 'r') as f:
+                # Skip shebang if present
+                lines = f.readlines()
+                if lines and lines[0].startswith('#!'):
+                    lines = lines[1:]
+                
+                # Execute each line
+                for line in lines:
+                    line = line.strip()
+                    if line and not line.startswith('#'):
+                        self.execute_command(line)
+                        
+        except FileNotFoundError:
+            print(f"aish: {script_path}: No such file", file=sys.stderr)
+            return 1
+        except Exception as e:
+            print(f"aish: {script_path}: {e}", file=sys.stderr)
+            return 1
+        
+        return 0
+    
+    def interactive(self):
+        """Run interactive AI shell"""
+        print("aish - The AI Shell v0.1.0")
+        print("Type 'help' for help, 'exit' to quit")
+        print()
+        
+        while True:
+            try:
+                # Get command
+                command = input("aish> ").strip()
+                
+                # Handle special commands
+                if command == 'exit':
+                    break
+                elif command == 'help':
+                    self._show_help()
+                elif command.startswith('!'):
+                    # Shell escape
+                    subprocess.run(command[1:], shell=True)
+                elif command:
+                    self.execute_command(command)
+                    
+            except KeyboardInterrupt:
+                print()  # New line after ^C
+                continue
+            except EOFError:
+                print()  # New line after ^D
+                break
+    
+    def _execute_pipeline(self, pipeline):
+        """Execute a parsed pipeline"""
+        pipeline_type = pipeline.get('type')
+        
+        if pipeline_type == 'team-chat':
+            return self._execute_team_chat(pipeline['message'])
+        elif pipeline_type == 'pipeline':
+            return self._execute_pipe_stages(pipeline['stages'])
+        elif pipeline_type == 'simple':
+            return self._execute_simple_command(pipeline['command'])
+        else:
+            return f"Unsupported pipeline type: {pipeline_type}"
+    
+    def _execute_team_chat(self, message):
+        """Execute team-chat broadcast"""
+        # Send to all active AIs
+        self.registry.write("team-chat-all", message)
+        
+        # Read responses
+        responses = self.registry.read("team-chat-all")
+        return '\n'.join(responses) if responses else "No responses yet"
+    
+    def _execute_pipe_stages(self, stages):
+        """Execute pipeline stages"""
+        current_data = None
+        
+        for i, stage in enumerate(stages):
+            if stage['type'] == 'echo':
+                # Start of pipeline with echo
+                current_data = stage['content']
+            elif stage['type'] == 'ai':
+                # Process through AI
+                ai_name = stage['name']
+                
+                # Get or create socket for this AI
+                socket_id = self._get_or_create_socket(ai_name)
+                
+                if current_data is not None:
+                    # Write input to AI
+                    success = self.registry.write(socket_id, current_data)
+                    if not success:
+                        return f"Failed to write to {ai_name}"
+                    
+                    # Read response
+                    responses = self.registry.read(socket_id)
+                    if responses:
+                        # Extract message content (remove header)
+                        current_data = responses[0]
+                        # Remove header if present
+                        if current_data.startswith(f"[team-chat-from-{ai_name}]"):
+                            current_data = current_data[len(f"[team-chat-from-{ai_name}]"):].strip()
+                    else:
+                        current_data = f"No response from {ai_name}"
+                else:
+                    return f"No input data for {ai_name}"
+            else:
+                # Other command types
+                current_data = f"Unsupported stage type: {stage['type']}"
+        
+        return current_data if current_data else "Pipeline completed"
+    
+    def _execute_simple_command(self, command):
+        """Execute a simple command"""
+        return f"Simple command: {command}"
+    
+    def _get_or_create_socket(self, ai_name):
+        """Get existing socket or create new one for AI"""
+        if ai_name not in self.active_sockets:
+            socket_id = self.registry.create(ai_name)
+            self.active_sockets[ai_name] = socket_id
+            if self.debug:
+                print(f"[DEBUG] Created socket {socket_id} for {ai_name}")
+        return self.active_sockets[ai_name]
+    
+    def _show_help(self):
+        """Display help information"""
+        print("""
+AI Shell Commands:
+  echo "text" | ai_name    - Send text to an AI
+  ai1 | ai2 | ai3         - Pipeline AIs together  
+  team-chat "message"     - Broadcast to all AIs
+  !command                - Execute shell command
+  help                    - Show this help
+  exit                    - Exit aish
+
+Examples:
+  echo "analyze this" | apollo
+  apollo | athena > output.txt
+  team-chat "what should we optimize?"
+        """)
+
+
+if __name__ == '__main__':
+    # Test shell
+    shell = AIShell(debug=True)
+    shell.interactive()
