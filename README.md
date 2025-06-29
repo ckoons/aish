@@ -44,10 +44,22 @@ cd aish
 ## Documentation
 
 See the `/docs` directory for detailed documentation:
+
+### User Documentation
+- [Getting Started](docs/getting-started.md) - Installation and first steps
+- [Command Reference](docs/command-reference.md) - Complete command syntax
+- [Pipeline Guide](docs/pipeline-guide.md) - Building AI pipelines
 - [Architecture](docs/architecture/) - System design and concepts
+
+### Advanced Features
+- [Session Management](docs/sessions.md) - Stateful conversations
+- [Streaming Guide](docs/streaming.md) - Real-time AI responses
 - [API Reference](docs/api/) - Programming interfaces
-- [Tutorials](docs/tutorials/) - Getting started guides
-- [Development](docs/development/) - Contributing guidelines
+
+### Development
+- [Development Guide](docs/development/) - Contributing guidelines
+- [Socket Implementation](docs/development/socket_implementation_guide.md) - Core implementation
+- [Sprint Planning](docs/sprints/) - Current development sprints
 
 ## Examples
 

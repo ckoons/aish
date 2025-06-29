@@ -108,6 +108,8 @@ class AIShell:
                     break
                 elif command == 'help':
                     self._show_help()
+                elif command == 'list-ais' or command == 'ais':
+                    self._list_ais()
                 elif command.startswith('!'):
                     # Shell escape
                     subprocess.run(command[1:], shell=True)
@@ -202,6 +204,7 @@ AI Shell Commands:
   echo "text" | ai_name    - Send text to an AI
   ai1 | ai2 | ai3         - Pipeline AIs together  
   team-chat "message"     - Broadcast to all AIs
+  list-ais, ais           - List available AI specialists
   !command                - Execute shell command
   help                    - Show this help
   exit                    - Exit aish
@@ -210,7 +213,57 @@ Examples:
   echo "analyze this" | apollo
   apollo | athena > output.txt
   team-chat "what should we optimize?"
+  echo "plan this" | @planning   (role-based routing - coming soon)
         """)
+    
+    def _list_ais(self):
+        """List available AI specialists"""
+        print("Discovering available AI specialists...")
+        ais = self.registry.discover_ais(force_refresh=True)
+        
+        if not ais:
+            print("No AI specialists found. Is Rhetor running?")
+            return
+        
+        # Deduplicate first
+        unique_ais = {}
+        for ai_info in ais.values():
+            if ai_info['id'] not in unique_ais:
+                unique_ais[ai_info['id']] = ai_info
+        
+        print(f"\nAvailable AI Specialists ({len(unique_ais)}):")
+        print("-" * 60)
+        
+        # Group by status
+        active = []
+        inactive = []
+        
+        for ai_info in unique_ais.values():
+            if ai_info.get('status') in ['active', 'healthy']:
+                active.append(ai_info)
+            else:
+                inactive.append(ai_info)
+        
+        # Show active first (deduplicated)
+        if active:
+            print("\nActive:")
+            seen = set()
+            for ai in sorted(active, key=lambda x: x['id']):
+                if ai['id'] not in seen:
+                    seen.add(ai['id'])
+                    caps = ', '.join(ai.get('capabilities', [])[:3])
+                    if caps:
+                        print(f"  {ai['id']:<20} - {caps}")
+                    else:
+                        print(f"  {ai['id']}")
+        
+        # Show inactive
+        if inactive:
+            print("\nInactive:")
+            for ai in sorted(inactive, key=lambda x: x['id']):
+                print(f"  {ai['id']:<20} - {ai.get('status', 'unknown')}")
+        
+        print("\nUse any AI name in a pipeline: echo \"hello\" | apollo")
 
 
 if __name__ == '__main__':

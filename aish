@@ -9,8 +9,18 @@ import os
 import argparse
 from pathlib import Path
 
+# Get the real path of the script (follows symlinks)
+script_path = Path(__file__).resolve()
+aish_root = script_path.parent
+src_path = aish_root / 'src'
+
 # Add src to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
+sys.path.insert(0, str(src_path))
+
+# Also add Tekton root if available
+tekton_root = aish_root.parent.parent / 'Tekton'
+if tekton_root.exists():
+    sys.path.insert(0, str(tekton_root))
 
 from core.shell import AIShell
 from core.version import __version__
@@ -50,6 +60,12 @@ def main():
         help='Rhetor endpoint (default: TEKTON_RHETOR_PORT env var or http://localhost:8003)'
     )
     
+    parser.add_argument(
+        '-l', '--list-ais',
+        action='store_true',
+        help='List available AI specialists and exit'
+    )
+    
     args = parser.parse_args()
     
     # Create shell instance
@@ -57,6 +73,11 @@ def main():
         rhetor_endpoint=args.rhetor,
         debug=args.debug
     )
+    
+    # Handle special commands
+    if args.list_ais:
+        shell._list_ais()
+        return
     
     # Execute based on mode
     if args.command:
