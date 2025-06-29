@@ -15,11 +15,17 @@ from registry.socket_registry import SocketRegistry
 class AIShell:
     """The AI Shell - orchestrates AI pipelines"""
     
-    def __init__(self, rhetor_endpoint='http://localhost:8003', debug=False):
-        self.rhetor_endpoint = rhetor_endpoint
+    def __init__(self, rhetor_endpoint=None, debug=False):
+        if rhetor_endpoint:
+            self.rhetor_endpoint = rhetor_endpoint
+        else:
+            # Check environment variable, then use default
+            port = os.environ.get('TEKTON_RHETOR_PORT', '8003')
+            self.rhetor_endpoint = f"http://localhost:{port}"
+        
         self.debug = debug
         self.parser = PipelineParser()
-        self.registry = SocketRegistry(rhetor_endpoint)
+        self.registry = SocketRegistry(self.rhetor_endpoint, debug=debug)
         self.history_file = Path.home() / '.aish_history'
         self.active_sockets = {}  # Track active socket IDs by AI name
         
@@ -88,6 +94,7 @@ class AIShell:
     def interactive(self):
         """Run interactive AI shell"""
         print("aish - The AI Shell v0.1.0")
+        print(f"Connected to Rhetor at: {self.rhetor_endpoint}")
         print("Type 'help' for help, 'exit' to quit")
         print()
         

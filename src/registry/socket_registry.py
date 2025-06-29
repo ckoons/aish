@@ -7,14 +7,20 @@ from collections import deque
 from datetime import datetime
 import requests
 import json
-import asyncio
-import aiohttp
+import os
 
 class SocketRegistry:
     """Registry for AI sockets managed by Rhetor"""
     
-    def __init__(self, rhetor_endpoint: str = "http://localhost:8003"):
-        self.rhetor_endpoint = rhetor_endpoint
+    def __init__(self, rhetor_endpoint: str = None, debug: bool = False):
+        if rhetor_endpoint:
+            self.rhetor_endpoint = rhetor_endpoint
+        else:
+            # Check environment variable, then use default
+            port = os.environ.get('TEKTON_RHETOR_PORT', '8003')
+            self.rhetor_endpoint = f"http://localhost:{port}"
+        
+        self.debug = debug
         self.sockets: Dict[str, Any] = {}
         self.message_queues: Dict[str, deque] = {}
         self.max_queue_size = 1000
@@ -40,21 +46,10 @@ class SocketRegistry:
         # Initialize message queue for this socket
         self.message_queues[socket_id] = deque(maxlen=self.max_queue_size)
         
-        # Create context in Rhetor
-        try:
-            simple_context = {
-                "role": ai_name,
-                "task": "aish-pipeline", 
-                "data": context or {}
-            }
-            response = requests.post(
-                f"{self.rhetor_endpoint}/contexts/{ai_name}",
-                json=simple_context
-            )
-            if response.status_code != 200:
-                print(f"Warning: Failed to create context in Rhetor: {response.text}")
-        except Exception as e:
-            print(f"Warning: Could not connect to Rhetor: {e}")
+        # For now, just track locally
+        # Note: Specialists are pre-created in Rhetor, we don't need to create them
+        if self.debug:
+            print(f"Created socket {socket_id} for {ai_name}")
         
         return socket_id
     
@@ -98,11 +93,7 @@ class SocketRegistry:
         """
         # Handle broadcast writes
         if socket_id == "team-chat-all":
-            success = True
-            for sid in self.sockets:
-                if not self._write_to_socket(sid, message):
-                    success = False
-            return success
+            return self._write_team_chat(message)
         
         # Write to specific socket
         return self._write_to_socket(socket_id, message)
@@ -119,25 +110,34 @@ class SocketRegistry:
         message_with_header = f"[team-chat-to-{ai_name}] {message}"
         
         try:
-            # Call Rhetor's completion API
+            # Map short names to full specialist IDs
+            specialist_map = {
+                'apollo': 'apollo-coordinator',
+                'athena': 'athena-analyst',
+                'hermes': 'hermes-messenger',
+                'prometheus': 'prometheus-strategist',
+                'rhetor': 'rhetor-orchestrator',
+                'engram': 'engram-memory',
+                'sophia': 'sophia-researcher'
+            }
+            
+            specialist_id = specialist_map.get(ai_name, f"{ai_name}-coordinator")
+            
+            # Try the direct specialist endpoint first
             payload = {
                 "message": message,
-                "context_id": socket_id,
-                "system_prompt": socket_info.get('prompt', ''),
-                "component_name": ai_name,
-                "provider_id": "ollama",  # Default provider
-                "model_id": socket_info.get('model', 'llama3.3')
+                "temperature": 0.7
             }
             
             response = requests.post(
-                f"{self.rhetor_endpoint}/complete",
+                f"{self.rhetor_endpoint}/api/ai/specialists/{specialist_id}/message",
                 json=payload,
                 timeout=30
             )
             
             if response.status_code == 200:
                 result = response.json()
-                # Extract the actual response message
+                # Extract the response content
                 ai_response = result.get('response', result.get('content', ''))
                 
                 # Add to message queue for this socket
@@ -145,12 +145,116 @@ class SocketRegistry:
                     self.message_queues[socket_id].append(ai_response)
                 
                 return True
+            elif response.status_code == 404:
+                # Specialist not found, fallback to team chat
+                if self.debug:
+                    print(f"Specialist {specialist_id} not found, using team chat fallback")
+                return self._write_via_team_chat(socket_id, ai_name, message)
             else:
-                print(f"Error from Rhetor: {response.status_code} - {response.text}")
+                if self.debug:
+                    print(f"Error from Rhetor: {response.status_code} - {response.text}")
                 return False
                 
         except Exception as e:
-            print(f"Error calling Rhetor: {e}")
+            if self.debug:
+                print(f"Error calling Rhetor: {e}")
+            return False
+    
+    def _write_via_team_chat(self, socket_id: str, ai_name: str, message: str) -> bool:
+        """Fallback to team chat for a specific AI"""
+        try:
+            payload = {
+                "message": f"[To {ai_name}] {message}",
+                "moderation_mode": "pass_through",
+                "timeout": 10.0
+            }
+            
+            response = requests.post(
+                f"{self.rhetor_endpoint}/api/team-chat",
+                json=payload,
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                responses = result.get('responses', {})
+                
+                # Look for response from our specific specialist
+                specialist_map = {
+                    'apollo': 'apollo-coordinator',
+                    'athena': 'athena-analyst',
+                    'hermes': 'hermes-messenger',
+                    'prometheus': 'prometheus-strategist',
+                    'rhetor': 'rhetor-orchestrator',
+                    'engram': 'engram-memory',
+                    'sophia': 'sophia-researcher'
+                }
+                
+                specialist_id = specialist_map.get(ai_name, f"{ai_name}-coordinator")
+                
+                if specialist_id in responses:
+                    ai_response = responses[specialist_id].get('content', '')
+                    if socket_id in self.message_queues:
+                        self.message_queues[socket_id].append(ai_response)
+                    return True
+                elif responses:
+                    # Get first response if our specialist didn't respond
+                    first_key = list(responses.keys())[0]
+                    ai_response = responses[first_key].get('content', '')
+                    if socket_id in self.message_queues:
+                        self.message_queues[socket_id].append(ai_response)
+                    return True
+                    
+            return False
+            
+        except Exception as e:
+            if self.debug:
+                print(f"Error in team chat fallback: {e}")
+            return False
+    
+    def _write_team_chat(self, message: str) -> bool:
+        """Send message to all AIs using team-chat endpoint"""
+        try:
+            # Get list of active AI names
+            specialists = [f"{socket['ai_name']}-ai" for socket in self.sockets.values()]
+            
+            if not specialists:
+                if self.debug:
+                    print("No active specialists for team chat")
+                return False
+            
+            # Use Rhetor's team-chat API with the correct endpoint and format
+            payload = {
+                "message": message,
+                "moderation_mode": "pass_through",
+                "timeout": 10.0
+            }
+            
+            response = requests.post(
+                f"{self.rhetor_endpoint}/api/team-chat",
+                json=payload,
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                responses = result.get('responses', {})
+                
+                # Add responses to appropriate queues
+                for socket_id, socket_info in self.sockets.items():
+                    ai_id = f"{socket_info['ai_name']}-ai"
+                    if ai_id in responses:
+                        self.message_queues[socket_id].append(responses[ai_id])
+                
+                return True
+            else:
+                if self.debug:
+                    print(f"Error from Rhetor team-chat: {response.status_code} - {response.text}")
+                return False
+                
+        except Exception as e:
+            if self.debug:
+                print(f"Error calling Rhetor team-chat: {e}")
             return False
     
     def delete(self, socket_id: str) -> bool:
@@ -161,13 +265,9 @@ class SocketRegistry:
         # Get AI name for context deletion
         ai_name = self.sockets[socket_id]['ai_name']
         
-        # Delete context from Rhetor
-        try:
-            response = requests.delete(f"{self.rhetor_endpoint}/contexts/{ai_name}")
-            if response.status_code not in [200, 204, 404]:
-                print(f"Warning: Failed to delete context from Rhetor: {response.text}")
-        except Exception as e:
-            print(f"Warning: Could not delete context from Rhetor: {e}")
+        # TODO: Delete specialist from Rhetor when API is ready
+        if self.debug:
+            print(f"Would delete specialist {ai_name} from Rhetor")
         
         # Clean up local state
         del self.sockets[socket_id]
@@ -188,25 +288,10 @@ class SocketRegistry:
         if socket_id in self.message_queues:
             self.message_queues[socket_id].clear()
         
-        # Reset context in Rhetor
+        # TODO: Reset specialist in Rhetor when API is ready
         ai_name = self.sockets[socket_id]['ai_name']
-        try:
-            # Delete and recreate context
-            requests.delete(f"{self.rhetor_endpoint}/contexts/{ai_name}")
-            
-            simple_context = {
-                "role": ai_name,
-                "task": "aish-pipeline",
-                "data": {}
-            }
-            response = requests.post(
-                f"{self.rhetor_endpoint}/contexts/{ai_name}",
-                json=simple_context
-            )
-            if response.status_code != 200:
-                print(f"Warning: Failed to reset context in Rhetor: {response.text}")
-        except Exception as e:
-            print(f"Warning: Could not reset context in Rhetor: {e}")
+        if self.debug:
+            print(f"Would reset specialist {ai_name} in Rhetor")
         
         return True
     

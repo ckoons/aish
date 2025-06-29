@@ -46,8 +46,8 @@ def main():
     
     parser.add_argument(
         '-r', '--rhetor',
-        default='http://localhost:8003',
-        help='Rhetor endpoint (default: http://localhost:8003)'
+        default=None,
+        help='Rhetor endpoint (default: TEKTON_RHETOR_PORT env var or http://localhost:8003)'
     )
     
     args = parser.parse_args()
