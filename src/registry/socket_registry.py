@@ -464,7 +464,7 @@ class SocketRegistry:
     
     def _write_via_socket(self, socket_id: str, ai_info: Dict[str, Any], message: str) -> bool:
         """Write to AI via direct socket connection using line-buffered protocol"""
-        from ..utils.socket_buffer import LineBufferedSocket, SocketTimeoutDetector
+        from utils.socket_buffer import LineBufferedSocket, SocketTimeoutDetector
         
         detector = SocketTimeoutDetector(debug=self.debug)
         host = ai_info.get('host', 'localhost')
