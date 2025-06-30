@@ -465,15 +465,7 @@ class SocketRegistry:
     
     def _write_via_socket(self, socket_id: str, ai_info: Dict[str, Any], message: str) -> bool:
         """Write to AI via direct socket connection using shared AISocketClient"""
-        try:
-            # Import the shared client from Tekton
-            from shared.ai.socket_client import AISocketClient
-        except ImportError:
-            if self.debug:
-                print("Failed to import AISocketClient from Tekton, falling back to socket_buffer")
-            # Fallback to local socket_buffer if Tekton not available
-            from utils.socket_buffer import LineBufferedSocket, SocketTimeoutDetector
-            return self._write_via_socket_legacy(socket_id, ai_info, message)
+        from shared.ai.socket_client import AISocketClient
         
         host = ai_info.get('host', 'localhost')
         port = ai_info.get('port')
@@ -521,71 +513,4 @@ class SocketRegistry:
         except Exception as e:
             if self.debug:
                 print(f"Socket communication with {ai_info['id']} failed: {e}")
-            # Try fallback to legacy method
-            return self._write_via_socket_legacy(socket_id, ai_info, message)
-    
-    def _write_via_socket_legacy(self, socket_id: str, ai_info: Dict[str, Any], message: str) -> bool:
-        """Legacy socket writing method using local socket_buffer (fallback)"""
-        from utils.socket_buffer import LineBufferedSocket, SocketTimeoutDetector
-        
-        detector = SocketTimeoutDetector(debug=self.debug)
-        host = ai_info.get('host', 'localhost')
-        port = ai_info.get('port')
-        
-        if not port:
-            if self.debug:
-                print(f"No port specified for {ai_info['id']}")
-            return False
-        
-        # Create connection with intelligent timeout
-        success, sock, error_msg = detector.create_connection(host, port)
-        if not success:
-            if self.debug:
-                print(f"Connection to {ai_info['id']} failed: {error_msg}")
-            return False
-        
-        try:
-            # Use line-buffered socket for reliable communication
-            buffered_socket = LineBufferedSocket(sock, timeout=30.0, debug=self.debug)
-            
-            # Send message with correct type
-            request = {
-                "type": "message",  # Fixed: was "chat", should be "message"
-                "content": message
-            }
-            
-            if not buffered_socket.write_message(request):
-                if self.debug:
-                    print(f"Failed to send message to {ai_info['id']}")
-                buffered_socket.close()
-                return False
-            
-            # Read response with proper buffering
-            response = buffered_socket.read_message()
-            buffered_socket.close()
-            
-            if response:
-                # Extract content from response
-                ai_response = response.get('content', response.get('response', ''))
-                
-                # Add to message queue
-                if socket_id in self.message_queues:
-                    self.message_queues[socket_id].append(ai_response)
-                
-                if self.debug:
-                    print(f"Socket response from {ai_info['id']}: {ai_response[:50]}...")
-                
-                return True
-            else:
-                if self.debug:
-                    print(f"No response from {ai_info['id']}")
-                return False
-                
-        except Exception as e:
-            if self.debug:
-                print(f"Socket communication with {ai_info['id']} failed: {e}")
-            try:
-                sock.close()
-            except:
-                pass
             return False
