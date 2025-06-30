@@ -11,6 +11,16 @@ import os
 import subprocess
 import time
 import asyncio
+from typing import TYPE_CHECKING
+
+# Import unified registry
+try:
+    from shared.ai.unified_registry import UnifiedAIRegistry, AISpecialist, AIStatus
+    from shared.ai.socket_client import create_sync_client
+    HAS_UNIFIED_REGISTRY = True
+except ImportError:
+    HAS_UNIFIED_REGISTRY = False
+    print("Warning: Could not import unified registry from Tekton")
 
 class SocketRegistry:
     """Registry for AI sockets managed by Rhetor"""
@@ -27,6 +37,14 @@ class SocketRegistry:
         self.sockets: Dict[str, Any] = {}
         self.message_queues: Dict[str, deque] = {}
         self.max_queue_size = 1000
+        
+        # Use unified registry if available
+        if HAS_UNIFIED_REGISTRY:
+            self.unified_registry = UnifiedAIRegistry()
+            self.sync_client = create_sync_client()
+        else:
+            self.unified_registry = None
+            self.sync_client = None
         
         # Cache for discovered AIs
         self._ai_cache = {}
@@ -305,12 +323,52 @@ class SocketRegistry:
         return list(self.sockets.keys())
     
     def discover_ais(self, force_refresh: bool = False) -> Dict[str, Any]:
-        """Discover available AI specialists using ai-discover tool"""
+        """Discover available AI specialists using unified registry"""
         # Check cache
         if not force_refresh and self._ai_cache and (time.time() - self._cache_time) < self._cache_ttl:
             return self._ai_cache
         
-        # Try ai-discover from multiple locations
+        # Use unified registry if available
+        if self.unified_registry:
+            try:
+                # Use sync wrapper
+                specialists = self.unified_registry.discover_sync()
+                
+                # Convert to expected format
+                self._ai_cache = {}
+                for spec in specialists:
+                    ai_info = {
+                        'id': spec.id,
+                        'name': spec.name,
+                        'component': spec.component,
+                        'status': spec.status.value,
+                        'capabilities': spec.capabilities,
+                        'host': spec.host,
+                        'port': spec.port,
+                        'socket': True,
+                        'model': spec.model
+                    }
+                    
+                    self._ai_cache[spec.id] = ai_info
+                    # Also index by short name
+                    if spec.id.endswith('-ai'):
+                        short_name = spec.id[:-3]
+                        self._ai_cache[short_name] = ai_info
+                    # Index by component
+                    if spec.component:
+                        self._ai_cache[spec.component] = ai_info
+                
+                self._cache_time = time.time()
+                if self.debug:
+                    print(f"Discovered {len(specialists)} AIs via unified registry")
+                return self._ai_cache
+                
+            except Exception as e:
+                if self.debug:
+                    print(f"Unified registry discovery failed: {e}")
+                # Fall through to legacy methods
+        
+        # Fallback to ai-discover tool
         ai_discover_configs = [
             {'cmd': 'ai-discover', 'cwd': None},  # In PATH
             {'cmd': 'python', 'args': ['scripts/ai-discover'], 'cwd': '/Users/cskoons/projects/github/Tekton'},  # From Tekton dir
@@ -372,34 +430,6 @@ class SocketRegistry:
                 if self.debug:
                     print(f"ai-discover with {config['cmd']} failed: {e}")
                 continue
-        
-        # Fallback to direct API
-        try:
-            response = requests.get(f"{self.rhetor_endpoint}/api/ai/specialists", timeout=5)
-            if response.status_code == 200:
-                data = response.json()
-                self._ai_cache = {}
-                seen_ids = set()
-                for spec in data.get('specialists', []):
-                    spec_id = spec['id']
-                    if spec_id not in seen_ids:
-                        seen_ids.add(spec_id)
-                        ai_info = {
-                            'id': spec_id,
-                            'name': spec.get('name', spec_id),
-                            'component': spec.get('component_id', ''),
-                            'status': spec.get('status', 'unknown'),
-                            'capabilities': spec.get('capabilities', [])
-                        }
-                        self._ai_cache[spec_id] = ai_info
-                        # Also index by component name if different
-                        if 'component_id' in spec and spec['component_id'] != spec_id:
-                            self._ai_cache[spec['component_id']] = ai_info
-                self._cache_time = time.time()
-                return self._ai_cache
-        except Exception as e:
-            if self.debug:
-                print(f"Failed to discover AIs: {e}")
         
         # Return empty if all discovery fails
         return {}
@@ -464,9 +494,7 @@ class SocketRegistry:
         return None
     
     def _write_via_socket(self, socket_id: str, ai_info: Dict[str, Any], message: str) -> bool:
-        """Write to AI via direct socket connection using shared AISocketClient"""
-        from shared.ai.socket_client import AISocketClient
-        
+        """Write to AI via direct socket connection using shared client"""
         host = ai_info.get('host', 'localhost')
         port = ai_info.get('port')
         
@@ -475,19 +503,10 @@ class SocketRegistry:
                 print(f"No port specified for {ai_info['id']}")
             return False
         
-        try:
-            # Create async client
-            client = AISocketClient(default_timeout=30.0)
-            
-            # Run async method in sync context
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            
+        # Use sync client if available
+        if self.sync_client:
             try:
-                # Send message using shared client
-                response = loop.run_until_complete(
-                    client.send_message(host, port, message)
-                )
+                response = self.sync_client.send_message(host, port, message)
                 
                 if response['success']:
                     # Extract content from response
@@ -507,10 +526,50 @@ class SocketRegistry:
                         print(f"Failed response from {ai_info['id']}: {response.get('error', 'Unknown error')}")
                     return False
                     
-            finally:
-                loop.close()
+            except Exception as e:
+                if self.debug:
+                    print(f"Socket communication with {ai_info['id']} failed: {e}")
+                return False
+        else:
+            # Fallback to async client with event loop
+            from shared.ai.socket_client import AISocketClient
+            
+            try:
+                # Create async client
+                client = AISocketClient(default_timeout=30.0)
                 
-        except Exception as e:
-            if self.debug:
-                print(f"Socket communication with {ai_info['id']} failed: {e}")
-            return False
+                # Run async method in sync context
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                
+                try:
+                    # Send message using shared client
+                    response = loop.run_until_complete(
+                        client.send_message(host, port, message)
+                    )
+                    
+                    if response['success']:
+                        # Extract content from response
+                        ai_response = response.get('response', '')
+                        
+                        # Add to message queue
+                        if socket_id in self.message_queues:
+                            self.message_queues[socket_id].append(ai_response)
+                        
+                        if self.debug:
+                            print(f"Socket response from {ai_info['id']}: {ai_response[:50]}...")
+                            print(f"AI model: {response.get('model', 'unknown')}, Time: {response.get('elapsed_time', 0):.2f}s")
+                        
+                        return True
+                    else:
+                        if self.debug:
+                            print(f"Failed response from {ai_info['id']}: {response.get('error', 'Unknown error')}")
+                        return False
+                        
+                finally:
+                    loop.close()
+                    
+            except Exception as e:
+                if self.debug:
+                    print(f"Socket communication with {ai_info['id']} failed: {e}")
+                return False

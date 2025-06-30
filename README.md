@@ -29,9 +29,9 @@ $ aish -c "echo 'test' | rhetor | apollo"
 
 - **Unix Pipeline Syntax** - Familiar `|`, `>`, `<` operators
 - **AI Process Management** - Create, pipe, and manage AI instances
-- **Distributed Execution** - Run AIs across multiple machines
+- **Unified AI Interface** - Integrated with Tekton's AI registry and health monitoring
 - **Team Chat** - Multi-AI collaboration built-in
-- **Socket-Based** - Everything is a file descriptor
+- **Automatic Discovery** - AIs are discovered and monitored automatically
 
 ## Installation
 
@@ -58,7 +58,7 @@ See the `/docs` directory for detailed documentation:
 
 ### Development
 - [Development Guide](docs/development/) - Contributing guidelines
-- [Socket Implementation](docs/development/socket_implementation_guide.md) - Core implementation
+- [Unified AI Interface](docs/api/unified_ai_interface.md) - AI communication system
 - [Sprint Planning](docs/sprints/) - Current development sprints
 
 ## Examples
@@ -77,6 +77,16 @@ echo "analyze" | ssh server1 apollo
 ## Philosophy
 
 AIs are just sockets. They read input, write output. Nothing more.
+
+## Integration with Tekton
+
+aish now uses Tekton's Unified AI Interface for robust AI discovery and communication. This provides:
+- Automatic health monitoring of AI specialists
+- Performance tracking and smart routing
+- Seamless fallback handling
+- Future streaming support
+
+See [Unified AI Interface](docs/api/unified_ai_interface.md) for details.
 
 ## License
 
