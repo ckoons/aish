@@ -2,43 +2,86 @@
 
 ## Overview
 
-This document describes the socket communication tests added in Phase 1 of the aish-Tekton integration.
+This document describes the socket communication tests for aish, which now use Tekton's Unified AI Interface.
 
 ## Test Files
 
-### test_socket_buffering.py
+### test_socket_communication.py
 
-Tests the core socket improvements including line-buffered reading and partial message handling.
+Tests the core socket communication functionality using the unified interface.
 
 **What it tests:**
 - Direct socket connections to AI specialists
-- Line-buffered message reading
-- Partial message reassembly
 - SocketRegistry communication
-- Dynamic port discovery
+- Dynamic AI discovery
+- Message sending and receiving
+- Team chat functionality
 
 **Key test cases:**
-1. `test_direct_socket_connection()` - Raw socket communication with ping/chat
-2. `test_socket_registry()` - High-level registry interface
-3. `test_partial_messages()` - Message fragmentation handling
+1. `test_socket_discovery()` - Discover available AI specialists
+2. `test_direct_socket_connection()` - Direct socket communication
+3. `test_socket_registry_communication()` - Registry-based messaging
 
-### test_phase1_integration.py
+### test_socket_registry.py (formerly test_pipeline.py)
 
-End-to-end integration tests for Phase 1 improvements.
+Tests the SocketRegistry implementation in detail.
 
 **What it tests:**
-- aish shell with AI specialists
-- Long message handling (>4KB)
-- Timeout detection
-- MCP tools integration
-- Multi-AI pipelines
+- Registry initialization
+- Socket creation and management
+- Message queuing
+- AI discovery caching
+- Error handling
 
-**Key test cases:**
-1. `test_aish_ai_specialists()` - Basic AI communication
-2. `test_aish_with_long_messages()` - Buffer overflow scenarios
-3. `test_timeout_detection()` - Intelligent timeout handling
-4. `test_mcp_integration()` - Tekton MCP tools
-5. `run_full_integration_test()` - Complex multi-AI scenarios
+### test_http_communication.py
+
+Tests HTTP-based communication with Rhetor specialists.
+
+**What it tests:**
+- HTTP API endpoints
+- Specialist messaging via REST
+- Team chat via HTTP
+- Error handling for HTTP requests
+
+### test_all_protocols.py
+
+Orchestrates running both socket and HTTP protocol tests.
+
+**What it does:**
+- Runs socket communication tests
+- Runs HTTP communication tests
+- Provides unified test results
+
+### test_integration.py
+
+End-to-end integration tests with the Rhetor platform.
+
+**What it tests:**
+- Complete aish integration with Rhetor
+- Multi-AI pipelines
+- Team chat functionality
+- Real AI responses
+
+### test_functional.py
+
+Unit tests for core aish components.
+
+**What it tests:**
+- PipelineParser functionality
+- SocketRegistry methods (mocked)
+- AIShell command execution (mocked)
+- No external dependencies required
+
+### test_aish_features.py
+
+Black-box testing of aish features using subprocess.
+
+**What it tests:**
+- Single AI communication
+- Pipeline execution
+- Team chat
+- Conversation history
+- Command-line interface
 
 ### check_ai_ports.py
 
@@ -61,17 +104,20 @@ python tests/check_ai_ports.py
 1. Tekton platform running (`tekton-launch`)
 2. AI specialists active (`tekton-status`)
 3. aish environment set up
+4. Unified registry populated (`python3 $TEKTON_ROOT/shared/ai/migrate_registry.py`)
 
 ### Quick Test
 ```bash
 # Check AI availability first
 python tests/check_ai_ports.py
 
-# Run socket tests
-python tests/test_socket_buffering.py
+# Run all tests quickly
+python tests/test_quick_check.py
 
-# Run full integration
-python tests/test_phase1_integration.py
+# Run specific test suites
+python tests/test_socket_communication.py
+python tests/test_functional.py
+python tests/test_integration.py
 ```
 
 ### Test Output
@@ -85,51 +131,73 @@ python tests/test_phase1_integration.py
 **Debug mode:**
 ```bash
 # Set environment variable for verbose output
-AISH_DEBUG=1 python tests/test_socket_buffering.py
+AISH_DEBUG=1 python tests/test_socket_communication.py
 ```
+
+## Unified AI Interface
+
+All tests now use Tekton's Unified AI Interface:
+
+```python
+# The SocketRegistry automatically uses the unified interface
+from registry.socket_registry import SocketRegistry
+
+registry = SocketRegistry(debug=True)
+# Discovers AIs via unified registry
+ais = registry.discover_ais()
+```
+
+Benefits:
+- Automatic health monitoring
+- Performance tracking
+- Consistent discovery
+- Better error handling
 
 ## Test Scenarios
 
 ### 1. Basic Communication
 - Send message to AI
 - Receive response
-- Verify JSON format
+- Verify response format
 
 ### 2. Error Conditions
 - AI not running
 - Network timeout
-- Invalid JSON
 - Connection refused
+- Invalid responses
 
 ### 3. Performance Tests
-- Large messages (>4KB)
-- Multiple concurrent connections
-- Rapid message sequences
+- Multiple AI pipelines
+- Concurrent connections
+- Team chat broadcasts
 
 ### 4. Protocol Tests
-- Ping/pong heartbeat
-- Message types (chat, info)
-- Context passing
+- Socket protocol (newline-delimited JSON)
+- HTTP REST API
+- Message routing
 
 ## Troubleshooting Tests
 
+### Test Fails: No AIs Found
+```
+No AI specialists discovered
+```
+**Solution**: 
+1. Ensure Tekton is running
+2. Run migration: `python3 $TEKTON_ROOT/shared/ai/migrate_registry.py`
+3. Check with: `ai-discover list`
+
 ### Test Fails: Connection Refused
 ```
-✗ athena port 45012 - NOT LISTENING
+Connection refused to localhost:45012
 ```
-**Solution**: Start Tekton platform or specific AI
+**Solution**: Start the specific AI or all AIs with `tekton-launch`
 
-### Test Fails: Timeout
+### Test Fails: Import Error
 ```
-[DEBUG] Socket timeout after 30.0s
+ImportError: No module named 'shared.ai.unified_registry'
 ```
-**Solution**: Check if AI is processing or hung
-
-### Test Fails: JSON Decode
-```
-[DEBUG] JSON decode error: Expecting value: line 1 column 1
-```
-**Solution**: Check AI response format
+**Solution**: Ensure TEKTON_ROOT is in Python path or run from correct directory
 
 ## Adding New Tests
 
@@ -141,32 +209,44 @@ def test_new_feature():
     registry = SocketRegistry(debug=True)
     
     # Execute
-    socket_id = registry.create('ai-name')
-    registry.write(socket_id, "test message")
+    socket_id = registry.create('apollo')
+    success = registry.write(socket_id, "test message")
     
     # Verify
-    response = registry.read(socket_id)
-    assert response is not None
-    assert "expected" in response[0]
+    assert success
+    responses = registry.read(socket_id)
+    assert len(responses) > 0
+    assert "expected" in responses[0]
     
+    # Cleanup
+    registry.delete(socket_id)
     return True
 ```
 
 ### Best Practices:
-1. Use dynamic discovery (no hardcoded ports)
+1. Use unified registry for discovery
 2. Handle timeouts gracefully
-3. Clean up resources (close sockets)
+3. Clean up resources
 4. Provide helpful error messages
-5. Use debug mode for detailed output
+5. Use debug mode for troubleshooting
 
 ## CI/CD Integration
 
 Tests can be run in CI with:
 ```bash
-python tests/run_tests.py --socket-tests
+# Run all tests
+python tests/run_tests.py
+
+# Run specific test categories
+python tests/test_functional.py  # No external deps
+python tests/test_integration.py # Requires Rhetor
 ```
 
 Expected exit codes:
 - 0: All tests passed
 - 1: One or more tests failed
 - 2: Setup/environment error
+
+## Test Status
+
+All tests have been updated to work with the Unified AI Interface. No references to old `socket_buffer.py` or `LineBufferedSocket` remain.
