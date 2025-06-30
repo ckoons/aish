@@ -17,8 +17,8 @@ src_path = aish_root / 'src'
 # Add src to path
 sys.path.insert(0, str(src_path))
 
-# Also add Tekton root if available
-tekton_root = aish_root.parent.parent / 'Tekton'
+# Also add Tekton root if available (sibling directory)
+tekton_root = aish_root.parent / 'Tekton'
 if tekton_root.exists():
     sys.path.insert(0, str(tekton_root))
 
