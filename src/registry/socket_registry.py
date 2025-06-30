@@ -463,33 +463,47 @@ class SocketRegistry:
         return None
     
     def _write_via_socket(self, socket_id: str, ai_info: Dict[str, Any], message: str) -> bool:
-        """Write to AI via direct socket connection"""
-        import socket as sock
-        import json
+        """Write to AI via direct socket connection using line-buffered protocol"""
+        from ..utils.socket_buffer import LineBufferedSocket, SocketTimeoutDetector
+        
+        detector = SocketTimeoutDetector(debug=self.debug)
+        host = ai_info.get('host', 'localhost')
+        port = ai_info.get('port')
+        
+        if not port:
+            if self.debug:
+                print(f"No port specified for {ai_info['id']}")
+            return False
+        
+        # Create connection with intelligent timeout
+        success, sock, error_msg = detector.create_connection(host, port)
+        if not success:
+            if self.debug:
+                print(f"Connection to {ai_info['id']} failed: {error_msg}")
+            return False
         
         try:
-            host = ai_info['host']
-            port = ai_info['port']
-            
-            # Create socket connection
-            client_socket = sock.socket(sock.AF_INET, sock.SOCK_STREAM)
-            client_socket.settimeout(30)
-            client_socket.connect((host, port))
+            # Use line-buffered socket for reliable communication
+            buffered_socket = LineBufferedSocket(sock, timeout=30.0, debug=self.debug)
             
             # Send message
             request = {
                 "type": "chat",
                 "content": message
             }
-            request_json = json.dumps(request) + "\n"
-            client_socket.send(request_json.encode())
             
-            # Read response
-            response_data = client_socket.recv(4096).decode().strip()
-            client_socket.close()
+            if not buffered_socket.write_message(request):
+                if self.debug:
+                    print(f"Failed to send message to {ai_info['id']}")
+                buffered_socket.close()
+                return False
             
-            if response_data:
-                response = json.loads(response_data)
+            # Read response with proper buffering
+            response = buffered_socket.read_message()
+            buffered_socket.close()
+            
+            if response:
+                # Extract content from response
                 ai_response = response.get('content', response.get('response', ''))
                 
                 # Add to message queue
@@ -500,10 +514,16 @@ class SocketRegistry:
                     print(f"Socket response from {ai_info['id']}: {ai_response[:50]}...")
                 
                 return True
-            
+            else:
+                if self.debug:
+                    print(f"No response from {ai_info['id']}")
+                return False
+                
         except Exception as e:
             if self.debug:
-                print(f"Socket communication failed: {e}")
+                print(f"Socket communication with {ai_info['id']} failed: {e}")
+            try:
+                sock.close()
+            except:
+                pass
             return False
-        
-        return False
