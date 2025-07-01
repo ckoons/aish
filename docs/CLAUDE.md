@@ -20,6 +20,7 @@ Instead of thousands of lines of orchestration code.
 - ✅ Team chat functionality
 - ✅ Dynamic AI discovery
 - ✅ Test suite (functional, integration, socket tests)
+- ✅ **NEW**: Transparent proxy shell mode (aish-proxy)
 - 🚧 Upcoming: Streaming, Sessions, Bulk Operations, WebSocket (see Sprint docs)
 
 ## Key Concepts You Must Understand
@@ -45,14 +46,23 @@ image.png | vision | athena | markdown > analysis.md
 ```
 aish/
 ├── aish                    # Entry point (like /bin/bash)
+├── aish-proxy             # NEW: Transparent shell mode
 ├── src/
 │   ├── core/
-│   │   └── shell.py       # Main REPL loop
+│   │   ├── shell.py       # Main REPL loop
+│   │   └── proxy_shell.py # NEW: Transparent proxy implementation
 │   ├── parser/
 │   │   └── pipeline.py    # Parse "ai1 | ai2" syntax
 │   ├── registry/
-│   │   └── socket_registry.py  # YOUR MAIN WORK AREA
+│   │   └── socket_registry.py  # Socket management
 │   └── runners/           # Future: execute pipelines
+├── tests/
+│   └── test_proxy_shell.py # Test the transparent proxy
+├── examples/
+│   └── demo_proxy_shell.py # Demo of proxy behavior
+└── docs/
+    └── development/
+        └── step1_transparent_proxy.md # Proxy documentation
 ```
 
 ## Implementation Priority
@@ -96,6 +106,26 @@ POST /api/ai/create
 ws://localhost:8300/ws/ai/{socket_id}
 ```
 
+## Transparent Proxy Shell (NEW!)
+
+aish now includes a transparent proxy mode that acts as middleware between users and their shell:
+
+```bash
+# Test the proxy
+python tests/test_proxy_shell.py
+
+# Run interactively
+./aish-proxy
+
+# In proxy mode:
+aish:~$ ls -la              # Normal shell commands pass through
+aish:~$ git status          # Works exactly as before
+aish:~$ echo "test" | apollo # AI commands are intercepted
+aish:~$ team-chat "hello"   # Team chat works transparently
+```
+
+The proxy automatically detects AI commands and routes them while passing everything else to the base shell unchanged.
+
 ## Testing Your Implementation
 
 1. Start Rhetor:
@@ -111,7 +141,16 @@ ws://localhost:8300/ws/ai/{socket_id}
    aish> echo "Hello" | apollo
    ```
 
-3. Check Team Chat UI in Hephaestus to see multi-AI communication
+3. Test transparent proxy:
+   ```bash
+   # Run tests
+   python tests/test_proxy_shell.py
+   
+   # Try interactive mode
+   ./aish-proxy
+   ```
+
+4. Check Team Chat UI in Hephaestus to see multi-AI communication
 
 ## Design Principles
 

@@ -1,0 +1,113 @@
+#!/usr/bin/env python3
+"""
+aish-proxy - Transparent AI-enhanced shell wrapper
+
+This can be used as a shell replacement that provides AI capabilities
+while maintaining full compatibility with existing shell workflows.
+
+Usage:
+  # Interactive mode
+  ./aish-proxy
+
+  # Single command
+  ./aish-proxy -c "ls -la"
+  
+  # As login shell (future)
+  chsh -s /path/to/aish-proxy
+"""
+
+import sys
+import os
+from pathlib import Path
+
+# Get the directory containing this script
+script_dir = Path(__file__).resolve().parent
+src_path = script_dir / 'src'
+
+# Add src to Python path
+sys.path.insert(0, str(src_path))
+
+try:
+    from core.proxy_shell import TransparentAishProxy
+except ImportError as e:
+    print(f"Error: Could not import aish proxy: {e}", file=sys.stderr)
+    print("Make sure you're running from the aish directory", file=sys.stderr)
+    sys.exit(1)
+
+
+def main():
+    """Main entry point for aish proxy."""
+    import argparse
+    
+    parser = argparse.ArgumentParser(
+        description='aish-proxy - Transparent AI-enhanced shell',
+        epilog='Enhances your shell with AI capabilities without changing the interface'
+    )
+    
+    parser.add_argument(
+        '-c', '--command',
+        help='Execute a single command and exit'
+    )
+    
+    parser.add_argument(
+        '--debug',
+        action='store_true',
+        help='Enable debug output'
+    )
+    
+    parser.add_argument(
+        '--shell',
+        help='Base shell to use (default: $SHELL)',
+        default=None
+    )
+    
+    parser.add_argument(
+        '--rhetor',
+        help='Rhetor endpoint (default: http://localhost:8003)',
+        default=None
+    )
+    
+    parser.add_argument(
+        '--version',
+        action='store_true',
+        help='Show version and exit'
+    )
+    
+    args = parser.parse_args()
+    
+    if args.version:
+        print("aish-proxy v1.0.0 - Transparent AI shell enhancement")
+        return 0
+    
+    # Create the transparent proxy
+    try:
+        proxy = TransparentAishProxy(
+            rhetor_endpoint=args.rhetor,
+            debug=args.debug,
+            base_shell=args.shell
+        )
+    except Exception as e:
+        print(f"Error: Failed to initialize aish proxy: {e}", file=sys.stderr)
+        return 1
+    
+    # Execute based on mode
+    try:
+        if args.command:
+            # Single command mode
+            exit_code = proxy.run_single_command(args.command)
+            return exit_code
+        else:
+            # Interactive mode
+            proxy.run_interactive()
+            return 0
+            
+    except KeyboardInterrupt:
+        print()  # Clean exit on Ctrl+C
+        return 130
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

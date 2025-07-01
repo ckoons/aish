@@ -32,6 +32,7 @@ $ aish -c "echo 'test' | rhetor | apollo"
 - **Unified AI Interface** - Integrated with Tekton's AI registry and health monitoring
 - **Team Chat** - Multi-AI collaboration built-in
 - **Automatic Discovery** - AIs are discovered and monitored automatically
+- **Transparent Shell Enhancement** - Use as your regular shell with AI capabilities
 
 ## Installation
 
@@ -60,6 +61,25 @@ See the `/docs` directory for detailed documentation:
 - [Development Guide](docs/development/) - Contributing guidelines
 - [Unified AI Interface](docs/api/unified_ai_interface.md) - AI communication system
 - [Sprint Planning](docs/sprints/) - Current development sprints
+
+## Transparent Shell Mode (New!)
+
+aish can now act as a transparent shell enhancement, intercepting AI commands while passing normal shell commands through:
+
+```bash
+# Use as your shell
+$ ./aish-proxy
+
+# Normal commands work as always
+aish:~$ ls -la
+aish:~$ git status
+aish:~$ npm install
+
+# AI commands are intercepted
+aish:~$ echo "analyze this code" | apollo
+aish:~$ team-chat "ready to deploy?"
+aish:~$ show me the git log
+```
 
 ## Examples
 
