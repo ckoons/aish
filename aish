@@ -27,19 +27,40 @@ from core.version import __version__
 
 def main():
     parser = argparse.ArgumentParser(
-        description='aish - The AI Shell',
-        epilog='AIs are just sockets. They read input, write output.'
+        description='aish - The AI Shell\n\nProvides AI capabilities in your terminal through the Tekton platform.',
+        epilog='''Examples:
+  aish                      # Start interactive AI shell
+  aish apollo "question"    # Send question to Apollo AI
+  echo "data" | aish athena # Pipe data to Athena AI
+  aish team-chat "hello"    # Broadcast to all AIs
+  aish -l                   # List available AIs
+  aish script.ai            # Run AI script file
+
+Available AIs: apollo, athena, rhetor, sophia, hermes, prometheus,
+               telos, ergon, engram, numa, noesis
+
+Environment variables:
+  RHETOR_ENDPOINT    # Override default Rhetor endpoint
+  AISH_ACTIVE        # Set by aish-proxy when active
+  AISH_DEBUG         # Enable debug output''',
+        formatter_class=argparse.RawDescriptionHelpFormatter
     )
     
     parser.add_argument(
-        'script',
+        'ai_or_script',
         nargs='?',
-        help='AI script to execute'
+        help='AI name (apollo, athena, etc.) or script file'
+    )
+    
+    parser.add_argument(
+        'message',
+        nargs='*',
+        help='Message to send to AI'
     )
     
     parser.add_argument(
         '-c', '--command',
-        help='Execute a single command and exit'
+        help='Execute a single AI pipeline command and exit'
     )
     
     parser.add_argument(
@@ -79,13 +100,45 @@ def main():
         shell._list_ais()
         return
     
-    # Execute based on mode
-    if args.command:
+    # Known AI names
+    ai_names = ['apollo', 'athena', 'rhetor', 'sophia', 'hermes', 'prometheus', 
+                'telos', 'ergon', 'engram', 'numa', 'noesis', 'team-chat']
+    
+    # Check if first argument is an AI name
+    if args.ai_or_script and args.ai_or_script.lower() in ai_names:
+        ai_name = args.ai_or_script.lower()
+        
+        # Get input from stdin if available, otherwise from message args
+        if not sys.stdin.isatty():
+            # Data is being piped in
+            input_data = sys.stdin.read()
+        elif args.message:
+            # Message provided as arguments
+            input_data = ' '.join(args.message)
+        else:
+            # Interactive mode with specific AI
+            print(f"[aish] Entering interactive mode with {ai_name}")
+            print("Type your message and press Ctrl+D when done:")
+            input_data = sys.stdin.read()
+        
+        # Route to AI
+        if ai_name == 'team-chat':
+            shell.execute_command(f'team-chat "{input_data}"')
+        else:
+            shell.execute_command(f'echo "{input_data}" | {ai_name}')
+    
+    # Original behavior for other cases
+    elif args.command:
         # Single command mode
         shell.execute_command(args.command)
-    elif args.script:
+    elif args.ai_or_script and os.path.isfile(args.ai_or_script):
         # Script execution mode
-        shell.execute_script(args.script)
+        shell.execute_script(args.ai_or_script)
+    elif args.ai_or_script:
+        # Unknown AI or command
+        print(f"aish: Unknown AI or file: {args.ai_or_script}", file=sys.stderr)
+        print("Available AIs: " + ", ".join(ai_names), file=sys.stderr)
+        sys.exit(1)
     else:
         # Interactive mode
         shell.interactive()
